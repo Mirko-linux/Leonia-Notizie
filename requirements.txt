@@ -1,0 +1,6 @@
+requests
+beautifulsoup4
+schedule
+redis
+telegraph
+python-dotenv

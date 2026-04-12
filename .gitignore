@@ -1,0 +1,22 @@
+
+gruppi.txt
+
+# File di configurazione sensibili
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+ENV/
+
+# Log
+*.log
+
+# Cartelle di sistema
+.DS_Store
+Thumbs.db
+
+
+
