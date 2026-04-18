@@ -32,58 +32,64 @@ logging.basicConfig(
 )
 
 def job_notiziario():
-    """Funzione principale eseguita ogni ora."""
+    """Funzione principale con filtro anti-duplicati."""
     ora_attuale = datetime.now().hour
     
+    # Verifica fascia operativa
     if config.FASCIA_ORARIA[0] <= ora_attuale <= config.FASCIA_ORARIA[1]:
         logging.info(f"Avvio elaborazione notiziario delle ore {ora_attuale}:00")
         
         notizie_raw = scraper.get_all_news()
         if not notizie_raw:
-            logging.warning("Nessuna notizia recuperata. Salto l'invio.")
+            logging.warning("Nessuna notizia recuperata.")
             return
 
+        # --- LOGICA FILTRO DUPLICATI ---
+        notizie_da_inviare = []
+        for notizia in notizie_raw:
+            url = notizia.get('link')
+            
+            # Controlliamo se l'URL è già presente nel set "news_sent" su Redis
+            if not telegram_bot.r.sismember("news_sent", url):
+                notizie_da_inviare.append(notizia)
+                # Aggiungiamo l'URL alla memoria
+                telegram_bot.r.sadd("news_sent", url)
+            else:
+                logging.info(f"Notizia già inviata in precedenza: {notizia.get('titolo')[:30]}...")
+
+        # Facciamo scadere la lista degli URL ogni 24 ore per non riempire Redis all'infinito
+        telegram_bot.r.expire("news_sent", 86400)
+
+        # Se dopo il filtro non ci sono notizie nuove, ci fermiamo qui
+        if not notizie_da_inviare:
+            logging.info("Nessuna nuova notizia da pubblicare. Salto il job.")
+            return
+        
+        # Prendiamo solo le prime 5 se ce ne sono troppe
+        notizie_da_inviare = notizie_da_inviare[:5]
+        # -------------------------------
+
         es_ora_speciale = (ora_attuale == 18)
-        testo_ia, modello_usato = ai_engine.genera_testo(notizie_raw, is_special=es_ora_speciale)
+        testo_ia, modello_usato = ai_engine.genera_testo(notizie_da_inviare, is_special=es_ora_speciale)
         
         if testo_ia and modello_usato:
-            # --- 1. PULIZIA EMOJI E CARATTERI ---
+            # Pulizia e formattazione (Regex per spazi e caratteri)
             testo_ia = re.sub(r'[^\x00-\x7fàèéìòùÀÈÉÌÒÙ⭐]+', '', testo_ia)
-
             testo_ia = re.sub(r'([a-z])([A-Z])', r'\1 \2', testo_ia)
             testo_ia = testo_ia.replace("</b>", "</b>\n")
 
-            if "Valutazione:" in testo_ia and "⭐" not in testo_ia:
-                testo_ia = testo_ia.replace("Valutazione:", "Valutazione: ⭐⭐⭐")
             if es_ora_speciale:
-                link_approfondimento = ai_engine.crea_pagina_telegraph(
+                # Logica Telegra.ph per le 18:00
+                link_art = ai_engine.crea_pagina_telegraph(
                     titolo=f"Approfondimento Leonia+ - {datetime.now().strftime('%d/%m/%Y')}",
                     contenuto_html=testo_ia
                 )
-                
-                if link_approfondimento:
-                    messaggio_per_invio = (
-                        f"<b>LEONIA+ APPROFONDIMENTO</b>\n\n"
-                        f"Leggi l'articolo completo qui:\n"
-                        f"<a href='{link_approfondimento}'>🔗 CLICCA PER APRIRE</a>\n\n"
-                        f"<i>Di Leonia+ Notizie</i>\n[Modello IA: {modello_usato}]"
-                    )
-                else:
-                    messaggio_per_invio = f"<b>LEONIA+ APPROFONDIMENTO</b>\n\n{testo_ia}\n\n<i>Di Leonia+ Notizie</i>"
+                msg = f"<b>LEONIA+ APPROFONDIMENTO</b>\n\n<a href='{link_art}'>🔗 LEGGI L'ARTICOLO</a>"
             else:
-                header = f"<b>LEONIA+ NOTIZIE - ORE {ora_attuale}:00</b>"
-                firma = f"\n\n<i>Di Leonia+ Notizie</i>\n[Modello IA: {modello_usato}]"
-                messaggio_per_invio = f"{header}\n\n{testo_ia}{firma}"
+                msg = f"<b>LEONIA+ NOTIZIE - ORE {ora_attuale}:00</b>\n\n{testo_ia}\n\n<i>Di Leonia+ Notizie</i>"
             
-            successo = telegram_bot.send_message_to_all(messaggio_per_invio)
-            if successo:
-                logging.info(f"Notiziario inviato con successo tramite {modello_usato}.")
-            else:
-                logging.error("Errore durante l'invio multiplo.")
-        else:
-            logging.error("L'IA non ha restituito contenuti validi.")
-    else:
-        logging.info(f"Ora attuale ({ora_attuale}:00) fuori fascia operativa.")
+            telegram_bot.send_message_to_all(msg)
+            logging.info(f"Notiziario inviato con {len(notizie_da_inviare)} nuove notizie.")
 
 # --- AVVIO E SCHEDULAZIONE ---
 if __name__ == "__main__":
