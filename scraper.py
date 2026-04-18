@@ -12,7 +12,8 @@ def scrape_ansa():
                 titolo = a_tag.get_text(strip=True)
                 link = a_tag['href']
                 if not link.startswith('http'): link = "https://www.ansa.it" + link
-                notizie.append(f"Fonte: ANSA | Titolo: {titolo} | Link: {link}")
+                # RESTITUISCE DIZIONARIO
+                notizie.append({"fonte": "ANSA", "titolo": titolo, "link": link})
         return notizie
     except: return []
 
@@ -21,14 +22,13 @@ def scrape_tgcom24():
         res = requests.get("https://www.tgcom24.mediaset.it/ultimissime/", timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         notizie = []
-        # TGCom24 usa spesso h3 per i titoli nelle liste
         for h3 in soup.find_all('h3', limit=5):
             a_tag = h3.find('a', href=True)
             if a_tag:
                 titolo = a_tag.get_text(strip=True)
                 link = a_tag['href']
                 if not link.startswith('http'): link = "https://www.tgcom24.mediaset.it" + link
-                notizie.append(f"Fonte: TGCom24 | Titolo: {titolo} | Link: {link}")
+                notizie.append({"fonte": "TGCom24", "titolo": titolo, "link": link})
         return notizie
     except: return []
 
@@ -37,14 +37,13 @@ def scrape_rainews():
         res = requests.get("https://www.rainews.it/notizie/ultimo-ora", timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         notizie = []
-        # RaiNews usa spesso h2 o tag con classi specifiche
         for h2 in soup.find_all('h2', limit=5):
             a_tag = h2.find_parent('a', href=True) or h2.find('a', href=True)
             if a_tag:
                 titolo = h2.get_text(strip=True)
                 link = a_tag['href']
                 if not link.startswith('http'): link = "https://www.rainews.it" + link
-                notizie.append(f"Fonte: RaiNews | Titolo: {titolo} | Link: {link}")
+                notizie.append({"fonte": "RaiNews", "titolo": titolo, "link": link})
         return notizie
     except: return []
 
@@ -58,8 +57,7 @@ def scrape_repubblica():
             if a_tag:
                 titolo = a_tag.get_text(strip=True)
                 link = a_tag['href']
-                if not link.startswith('http'): link = link # Repubblica usa spesso URL assoluti
-                notizie.append(f"Fonte: Repubblica | Titolo: {titolo} | Link: {link}")
+                notizie.append({"fonte": "Repubblica", "titolo": titolo, "link": link})
         return notizie
     except: return []
 
@@ -73,20 +71,25 @@ def scrape_corriere():
             if a_tag:
                 titolo = a_tag.get_text(strip=True)
                 link = a_tag['href']
-                if not link.startswith('http'): link = link
-                notizie.append(f"Fonte: Corriere | Titolo: {titolo} | Link: {link}")
+                notizie.append({"fonte": "Corriere", "titolo": titolo, "link": link})
         return notizie
     except: return []
 
 def get_all_news():
-    """Raccoglie le notizie da tutte e 5 le fonti e le unisce."""
+    """Raccoglie le notizie e rimuove duplicati basandosi sull'URL."""
     tutte_le_notizie = []
-    
     tutte_le_notizie.extend(scrape_ansa())
     tutte_le_notizie.extend(scrape_tgcom24())
     tutte_le_notizie.extend(scrape_rainews())
     tutte_le_notizie.extend(scrape_repubblica())
     tutte_le_notizie.extend(scrape_corriere())
     
-    # Rimuove duplicati basandosi sul testo e filtra stringhe corte
-    return list(set([n for n in tutte_le_notizie if len(n) > 20]))
+    # Rimuove duplicati basandosi sul link unico
+    seen_links = set()
+    unique_news = []
+    for n in tutte_le_notizie:
+        if n['link'] not in seen_links:
+            unique_news.append(n)
+            seen_links.add(n['link'])
+            
+    return unique_news
