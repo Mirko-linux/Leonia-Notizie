@@ -47,8 +47,14 @@ def job_notiziario():
         testo_ia, modello_usato = ai_engine.genera_testo(notizie_raw, is_special=es_ora_speciale)
         
         if testo_ia and modello_usato:
-            testo_ia = re.sub(r'[^\x00-\x7fàèéìòùÀÈÉÌÒÙ]+', '', testo_ia)
+            # --- 1. PULIZIA EMOJI E CARATTERI ---
+            testo_ia = re.sub(r'[^\x00-\x7fàèéìòùÀÈÉÌÒÙ⭐]+', '', testo_ia)
 
+            testo_ia = re.sub(r'([a-z])([A-Z])', r'\1 \2', testo_ia)
+            testo_ia = testo_ia.replace("</b>", "</b>\n")
+
+            if "Valutazione:" in testo_ia and "⭐" not in testo_ia:
+                testo_ia = testo_ia.replace("Valutazione:", "Valutazione: ⭐⭐⭐")
             if es_ora_speciale:
                 link_approfondimento = ai_engine.crea_pagina_telegraph(
                     titolo=f"Approfondimento Leonia+ - {datetime.now().strftime('%d/%m/%Y')}",
