@@ -81,6 +81,27 @@ def send_message_to_all(text):
             time.sleep(attesa)
     return True
 
+def send_audio_to_all(audio_path, caption):
+    """Invia il file audio a tutti i gruppi registrati."""
+    groups = r.smembers("telegram_groups")
+    success = True
+    
+    for group_id in groups:
+        try:
+            url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendAudio"
+            with open(audio_path, 'rb') as audio:
+                files = {'audio': audio}
+                data = {
+                    'chat_id': group_id, 
+                    'caption': caption, 
+                    'parse_mode': 'HTML'
+                }
+                requests.post(url, files=files, data=data)
+        except Exception as e:
+            logging.error(f"Errore invio audio a {group_id}: {e}")
+            success = False
+    return success
+
 def send_message(text, target_chat=None):
     """Invia a una singola chat con gestione HTML e messaggi lunghi."""
     if not text: return False
