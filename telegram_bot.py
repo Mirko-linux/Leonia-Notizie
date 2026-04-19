@@ -86,6 +86,18 @@ def send_message(text, target_chat=None):
         logging.error(f"Errore invio testo a {chat_id}: {e}")
         return False
 
+def send_message_to_all(text):
+    """Cicla su tutti i gruppi e invia il messaggio di testo."""
+    destinatari = get_lista_gruppi()
+    logging.info(f"INVIO TESTO: Inizio invio a {len(destinatari)} chat...")
+    
+    for chat_id in destinatari:
+        # Usiamo la funzione send_message che gestisce già i Topic
+        send_message(text, target_chat=chat_id)
+        # Anti-spam: piccola pausa tra un invio e l'altro
+        time.sleep(0.3) 
+    return True
+
 def send_audio_to_all(audio_path, caption):
     destinatari = get_lista_gruppi()
     url = f"https://api.telegram.org/bot{config.TOKEN}/sendAudio"
