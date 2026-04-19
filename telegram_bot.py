@@ -60,47 +60,54 @@ def get_lista_gruppi():
 
     return list(dict.fromkeys(lista))
 
-def send_message_to_all(text):
-    """Invia il testo a tutti."""
-    destinatari = get_lista_gruppi()
-    for chat_id in destinatari:
-        send_message(text, target_chat=chat_id)
-        time.sleep(0.3) # Piccola pausa anti-flood
-
-def send_audio_to_all(audio_path, caption):
-    """Invia l'audio a tutti i gruppi usando la STESSA LISTA del testo."""
-    destinatari = get_lista_gruppi()
-    success = True
-    
-    url = f"https://api.telegram.org/bot{config.TOKEN}/sendAudio" # Usa lo stesso token
-    
-    for group_id in destinatari:
-        try:
-            with open(audio_path, 'rb') as audio:
-                files = {'audio': audio}
-                data = {
-                    'chat_id': group_id, 
-                    'caption': caption, 
-                    'parse_mode': 'HTML'
-                }
-                res = requests.post(url, files=files, data=data, timeout=30)
-                if res.status_code != 200:
-                    logging.error(f"Errore API invio audio a {group_id}: {res.text}")
-        except Exception as e:
-            logging.error(f"Errore invio audio a {group_id}: {e}")
-            success = False
-    return success
-
 def send_message(text, target_chat=None):
-    """Invia a una singola chat."""
     if not text: return False
-    chat_id = target_chat if target_chat else config.CHAT_ID
-    url = f"https://api.telegram.org/bot{config.TOKEN}/sendMessage"
+    full_id = str(target_chat if target_chat else config.CHAT_ID)
     
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    # Gestione Topic: separa l'ID dal Topic ID se presente (es. -100123:555)
+    thread_id = None
+    if ":" in full_id:
+        chat_id, thread_id = full_id.split(":")
+    else:
+        chat_id = full_id
+
+    url = f"https://api.telegram.org/bot{config.TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id, 
+        "text": text, 
+        "parse_mode": "HTML",
+        "message_thread_id": thread_id  # Telegram lo ignora se è None
+    }
+    
     try:
         res = requests.post(url, json=payload, timeout=25)
         return res.status_code == 200
     except Exception as e:
-        logging.error(f"Errore invio a {chat_id}: {e}")
+        logging.error(f"Errore invio testo a {chat_id}: {e}")
         return False
+
+def send_audio_to_all(audio_path, caption):
+    destinatari = get_lista_gruppi()
+    url = f"https://api.telegram.org/bot{config.TOKEN}/sendAudio"
+    
+    for full_id in destinatari:
+        # Logica Topic anche per l'audio
+        thread_id = None
+        if ":" in str(full_id):
+            chat_id, thread_id = str(full_id).split(":")
+        else:
+            chat_id = full_id
+
+        try:
+            with open(audio_path, 'rb') as audio:
+                files = {'audio': audio}
+                data = {
+                    'chat_id': chat_id, 
+                    'caption': caption, 
+                    'parse_mode': 'HTML',
+                    'message_thread_id': thread_id
+                }
+                requests.post(url, files=files, data=data, timeout=120)
+                logging.info(f"Audio inviato a {chat_id} (Topic: {thread_id})")
+        except Exception as e:
+            logging.error(f"Errore audio a {chat_id}: {e}")
