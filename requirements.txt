@@ -6,3 +6,4 @@ schedule
 redis
 telegraph
 python-dotenv
+pydub
