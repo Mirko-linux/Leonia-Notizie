@@ -7,6 +7,7 @@ import threading
 import os
 from flask import Flask
 
+
 # Import dei moduli locali
 import scraper
 import ai_engine

@@ -1,30 +1,24 @@
 from gtts import gTTS
-from pydub import AudioSegment  # Necessario per unire sigla e voce
+from pydub import AudioSegment
 import os
 import logging
 import re
 
 def genera_audio(testo, filename="news_finale.mp3"):
     """
-    Trasforma il testo in audio MP3:
-    1. Rimuove link e tag HTML (così non vengono letti).
-    2. Genera la voce con gTTS.
-    3. Incolla la 'sigla.mp3' all'inizio del file.
+    Trasforma il testo in audio MP3 con gestione percorsi assoluti.
     """
-    temp_voice = "voice_temp.mp3"
+    # Determiniamo la cartella dove si trova fisicamente questo script
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    path_sigla = os.path.join(BASE_DIR, "sigla.mp3")
+    temp_voice = os.path.join(BASE_DIR, "voice_temp.mp3")
+    output_path = os.path.join(BASE_DIR, filename)
     
     try:
-        # --- 1. PULIZIA TESTO PER LA LETTURA VOCALE ---
-        # Rimuove i tag HTML (es: <b>, </b>)
+        # --- 1. PULIZIA TESTO ---
         testo_pulito = re.sub(r'<[^>]+>', '', testo)
-        
-        # Rimuove i link (http, https, www) affinché non vengano compitati lettera per lettera
         testo_pulito = re.sub(r'http\S+|www\S+', '', testo_pulito)
-        
-        # Rimuove emoji (come ⭐) e separatori grafici (come ---)
         testo_pulito = testo_pulito.replace("⭐", "").replace("---", "")
-        
-        # Pulizia spazi extra
         testo_pulito = " ".join(testo_pulito.split())
 
         if not testo_pulito.strip():
@@ -37,37 +31,32 @@ def genera_audio(testo, filename="news_finale.mp3"):
         tts.save(temp_voice)
 
         # --- 3. INTEGRAZIONE SIGLA ---
-        if os.path.exists("sigla.mp3"):
-            logging.info("Sigla.mp3 trovata. Unione audio in corso...")
-            sigla = AudioSegment.from_mp3("sigla.mp3")
+        # Verifichiamo se il file esiste usando il percorso assoluto
+        if os.path.exists(path_sigla):
+            logging.info(f"Sigla trovata in: {path_sigla}. Unione in corso...")
+            sigla = AudioSegment.from_mp3(path_sigla)
             voce = AudioSegment.from_mp3(temp_voice)
             
-            # Crea una pausa di silenzio di 500ms (mezzo secondo) tra sigla e voce
             pausa = AudioSegment.silent(duration=500)
-            
-            # Unione: SIGLA + PAUSA + VOCE
             audio_completo = sigla + pausa + voce
             
-            # Esporta il file finale
-            audio_completo.export(filename, format="mp3")
+            # Esportiamo l'audio finale
+            audio_completo.export(output_path, format="mp3")
             
-            # Rimuove il file temporaneo della voce
             if os.path.exists(temp_voice):
                 os.remove(temp_voice)
                 
-            logging.info(f"Audio finale creato con sigla: {filename}")
-            return filename
+            logging.info(f"Audio finale creato: {output_path}")
+            return output_path
         else:
-            # Se la sigla manca, usa solo la voce generata
-            logging.warning("Sigla.mp3 non trovata nella cartella. Genero audio solo voce.")
-            if os.path.exists(filename):
-                os.remove(filename)
-            os.rename(temp_voice, filename)
-            return filename
+            logging.warning(f"Sigla NON trovata al percorso: {path_sigla}. Uso solo voce.")
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            os.rename(temp_voice, output_path)
+            return output_path
 
     except Exception as e:
-        logging.error(f"Errore critico durante la generazione audio: {e}")
-        # Pulizia in caso di errore per non lasciare file corrotti
+        logging.error(f"Errore critico audio: {e}")
         if os.path.exists(temp_voice):
             os.remove(temp_voice)
         return None
