@@ -7,4 +7,3 @@ redis
 telegraph
 python-dotenv
 pydub
-pyaudioop
