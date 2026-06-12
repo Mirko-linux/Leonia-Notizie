@@ -141,8 +141,17 @@ if __name__ == "__main__":
     logging.info("Web Server Flask avviato (Port-binding attivo)")
 
     # 2. Configura Schedule
-    schedule.every().hour.at(":00").do(job_notiziario)
+# 2. Configura Schedule (Ogni 3 ore + l'appuntamento speciale delle 18:00)
+    # Puoi modificare o aggiungere orari a tuo piacimento qui sotto:
+    schedule.every().day.at("09:00").do(job_notiziario)
+    schedule.every().day.at("12:00").do(job_notiziario)
+    schedule.every().day.at("15:00").do(job_notiziario)
+    schedule.every().day.at("18:00").do(job_notiziario) 
+    schedule.every().day.at("21:00").do(job_notiziario)
 
+    logging.info("====================================")
+    logging.info("   LEONIA+ NOTIZIE BOT AVVIATO      ")
+    logging.info("====================================")
     logging.info("====================================")
     logging.info("   LEONIA+ NOTIZIE BOT AVVIATO      ")
     logging.info("====================================")
