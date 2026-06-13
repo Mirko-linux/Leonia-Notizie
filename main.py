@@ -7,7 +7,6 @@ import threading
 import os
 from flask import Flask
 
-
 # Import dei moduli locali
 import scraper
 import ai_engine
@@ -34,7 +33,7 @@ logging.basicConfig(
 )
 
 def job_notiziario():
-    """Funzione principale con protezione anti-crash e gestione database."""
+    """Funzione principale con protezione anti-crash e gestione tramite Canale Cassaforte."""
     ora_attuale = datetime.now().hour
     
     # 1. Verifica fascia operativa
@@ -55,30 +54,27 @@ def job_notiziario():
         logging.warning("Nessuna notizia recuperata dai siti.")
         return
 
-    # 3. Logica Filtro Duplicati con Protezione Anti-Crash
+    # 3. Logica Filtro Duplicati con il Canale Cassaforte di Telegram
     notizie_da_inviare = []
     
-    # Controlliamo se la connessione Redis esiste
-    if telegram_bot.r is not None:
-        try:
-            for notizia in notizie_raw:
-                # Gestione robusta: notizia può essere dict o str (per sicurezza)
-                url = notizia.get('link') if isinstance(notizia, dict) else notizia
-                
-                if not telegram_bot.r.sismember("news_sent", url):
-                    notizie_da_inviare.append(notizia)
-                    telegram_bot.r.sadd("news_sent", url)
-                else:
-                    titolo = notizia.get('titolo', 'Senza Titolo')[:30] if isinstance(notizia, dict) else url[:30]
-                    logging.info(f"Notizia già inviata: {titolo}...")
+    logging.info("Verifica duplicati tramite la cronologia del canale di log...")
+    try:
+        for notizia in notizie_raw:
+            # Gestione robusta: notizia può essere dict o str
+            url = notizia.get('link') if isinstance(notizia, dict) else notizia
+            titolo = notizia.get('titolo', 'Senza Titolo') if isinstance(notizia, dict) else url[:30]
             
-            # Scadenza memoria 24h
-            telegram_bot.r.expire("news_sent", 86400)
-        except Exception as e:
-            logging.error(f"Errore database Redis durante il filtro: {e}. Procedo senza filtro.")
-            notizie_da_inviare = notizie_raw[:5] # Fallback: prendi le prime 5
-    else:
-        logging.warning("Redis non collegato! Invio notizie senza controllo duplicati.")
+            # Interroga Telegram per sapere se l'URL è già stato inviato
+            if not telegram_bot.controlla_duplicato_su_telegram(url):
+                notizie_da_inviare.append(notizia)
+                # Salviamo subito nel log per evitare che cicli concorrenti lo riprendano
+                telegram_bot.salva_notizia_nel_log(url, titolo)
+                time.sleep(0.2)  # Piccola pausa di rispetto per le API di Telegram
+            else:
+                logging.info(f"Notizia scartata (già inviata in precedenza): {titolo[:30]}...")
+                
+    except Exception as e:
+        logging.error(f"Errore durante il filtraggio delle notizie: {e}. Procedo con fallback.")
         notizie_da_inviare = notizie_raw[:5]
 
     if not notizie_da_inviare:
@@ -102,7 +98,7 @@ def job_notiziario():
         testo_ia = re.sub(r'([a-z])([A-Z])', r'\1 \2', testo_ia)
         testo_ia = testo_ia.replace("</b>", "</b>\n")
 
-        # 5. Invio Messaggio Testuale
+        # 5. Invio Messaggio Testuale e Fissaggio Automatico
         if es_ora_speciale:
             try:
                 link_art = ai_engine.crea_pagina_telegraph(
@@ -116,8 +112,9 @@ def job_notiziario():
         else:
             msg = f"<b>LEONIA+ NOTIZIE - ORE {ora_attuale}:00</b>\n\n{testo_ia}\n\n<i>Di Leonia+ Notizie</i>"
         
+        # Invia a tutti e fissa automaticamente (la logica di pin è interna a send_message_to_all)
         telegram_bot.send_message_to_all(msg)
-        logging.info(f"Messaggio inviato con successo ({modello_usato}).")
+        logging.info(f"Messaggio inviato e fissato con successo ({modello_usato}).")
 
         # 6. Generazione e Invio Audio
         try:
@@ -140,27 +137,16 @@ if __name__ == "__main__":
     flask_thread.start()
     logging.info("Web Server Flask avviato (Port-binding attivo)")
 
-    # 2. Configura Schedule
-# 2. Configura Schedule (Ogni 3 ore + l'appuntamento speciale delle 18:00)
-    # Puoi modificare o aggiungere orari a tuo piacimento qui sotto:
+    # 2. Configura Schedule (Ogni 3 ore + l'appuntamento speciale delle 18:00)
     schedule.every().day.at("09:00").do(job_notiziario)
     schedule.every().day.at("12:00").do(job_notiziario)
     schedule.every().day.at("15:00").do(job_notiziario)
-    schedule.every().day.at("18:00").do(job_notiziario) 
+    schedule.every().day.at("18:00").do(job_notiziario) # Rimane l'approfondimento speciale
     schedule.every().day.at("21:00").do(job_notiziario)
 
     logging.info("====================================")
     logging.info("   LEONIA+ NOTIZIE BOT AVVIATO      ")
     logging.info("====================================")
-    logging.info("====================================")
-    logging.info("   LEONIA+ NOTIZIE BOT AVVIATO      ")
-    logging.info("====================================")
-
-    # 3. Test iniziale (esegue il job appena acceso il bot)
-    try:
-        job_notiziario()
-    except Exception as e:
-        logging.error(f"Errore test iniziale: {e}")
 
     # 4. Loop Infinito
     while True:
