@@ -22,7 +22,6 @@ def home():
     return "Leonia+ Notizie Bot is running!"
 
 def run_flask():
-    # Render assegna una porta dinamica tramite la variabile PORT
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -32,8 +31,37 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+def calcola_valutazione_potenziale(notizia, tutte_le_notizie):
+    """
+    Calcola il punteggio in stelle (da 1 a 5) basandosi su quante fonti
+    parlano dello stesso argomento (parole chiave simili nel titolo).
+    """
+    titolo_target = (notizia.get('titolo', '') if isinstance(notizia, dict) else '').lower()
+    if not titolo_target:
+        return "⭐"
+        
+    # Estrae parole chiave significative (lunghe più di 4 caratteri)
+    parole_chiave = [p for p in re.findall(r'\b\w{5,}\b', titolo_target)]
+    if not parole_chiave:
+        return "⭐"
+
+    fonti_concordi = 1
+    # Confronta con le altre notizie estratte nel ciclo attuale
+    for altra in tutte_le_notizie:
+        t_altra = (altra.get('titolo', '') if isinstance(altra, dict) else '').lower()
+        if t_altra == titolo_target:
+            continue
+        # Se l'altro titolo contiene almeno 2 delle parole chiave, consideriamo la notizia correlata
+        corrispondenze = sum(1 for pc in parole_chiave if pc in t_altra)
+        if corrispondenze >= 2:
+            fonti_concordi += 1
+
+    # Cap a 5 stelle massimo
+    stelle = min(fonti_concordi, 5)
+    return "⭐" * stelle
+
 def job_notiziario():
-    """Funzione principale con protezione anti-crash e gestione tramite Canale Cassaforte."""
+    """Funzione principale con invio sistematico su Telegraph, Audio e Calcolo Fonti."""
     ora_attuale = datetime.now().hour
     
     # 1. Verifica fascia operativa
@@ -41,7 +69,7 @@ def job_notiziario():
         logging.info(f"Fuori fascia oraria operativa ({ora_attuale}:00). Riposo.")
         return
 
-    logging.info(f"Avvio elaborazione notiziario delle ore {ora_attuale}:00")
+    logging.info(f"Avvio elaborazione delle ore {ora_attuale}:00")
     
     # 2. Recupero notizie
     try:
@@ -54,76 +82,91 @@ def job_notiziario():
         logging.warning("Nessuna notizia recuperata dai siti.")
         return
 
-    # 3. Logica Filtro Duplicati con il Canale Cassaforte di Telegram
+    # 3. Logica Filtro Duplicati con il Canale Cassaforte
     notizie_da_inviare = []
-    
     logging.info("Verifica duplicati tramite la cronologia del canale di log...")
     try:
         for notizia in notizie_raw:
-            # Gestione robusta: notizia può essere dict o str
             url = notizia.get('link') if isinstance(notizia, dict) else notizia
             titolo = notizia.get('titolo', 'Senza Titolo') if isinstance(notizia, dict) else url[:30]
             
-            # Interroga Telegram per sapere se l'URL è già stato inviato
             if not telegram_bot.controlla_duplicato_su_telegram(url):
                 notizie_da_inviare.append(notizia)
-                # Salviamo subito nel log per evitare che cicli concorrenti lo riprendano
                 telegram_bot.salva_notizia_nel_log(url, titolo)
-                time.sleep(0.2)  # Piccola pausa di rispetto per le API di Telegram
+                time.sleep(0.2)
             else:
-                logging.info(f"Notizia scartata (già inviata in precedenza): {titolo[:30]}...")
-                
+                logging.info(f"Notizia scartata (già inviata): {titolo[:30]}...")
     except Exception as e:
-        logging.error(f"Errore durante il filtraggio delle notizie: {e}. Procedo con fallback.")
+        logging.error(f"Errore filtraggio notizie: {e}. Procedo con fallback.")
         notizie_da_inviare = notizie_raw[:5]
 
     if not notizie_da_inviare:
         logging.info("Nessuna nuova notizia da pubblicare dopo il filtraggio.")
         return
     
-    # Limitiamo sempre a 5 per non sovraccaricare l'IA e il TTS
     notizie_da_inviare = notizie_da_inviare[:5]
 
-    # 4. Generazione Testo IA
-    es_ora_speciale = (ora_attuale == 18)
+    # Calcolo della stella di valutazione per la notizia principale/rilevante
+    valutazione_stelle = calcola_valutazione_potenziale(notizie_da_inviare[0], notizie_raw)
+
+    # 4. Generazione Testo Esteso via IA (destinato a Telegraph e Audio)
+    es_ora_speciale = (ora_attuale == 15)  # Spostato l'approfondimento speciale alle 15
     try:
-        testo_ia, modello_usato = ai_engine.genera_testo(notizie_da_inviare, is_special=es_ora_speciale)
+        testo_ia_esteso, modello_usato = ai_engine.genera_testo(notizie_da_inviare, is_special=es_ora_speciale)
     except Exception as e:
         logging.error(f"Errore generazione testo IA: {e}")
         return
 
-    if testo_ia and modello_usato:
-        # Pulizia e formattazione
-        testo_ia = re.sub(r'[^\x00-\x7fàèéìòùÀÈÉÌÒÙ⭐]+', '', testo_ia)
-        testo_ia = re.sub(r'([a-z])([A-Z])', r'\1 \2', testo_ia)
-        testo_ia = testo_ia.replace("</b>", "</b>\n")
+    if testo_ia_esteso and modello_usato:
+        # Pulizia caratteri e tag
+        testo_ia_esteso = re.sub(r'[^\x00-\x7fàèéìòùÀÈÉÌÒÙ⭐]+', '', testo_ia_esteso)
+        testo_ia_esteso = re.sub(r'([a-z])([A-Z])', r'\1 \2', testo_ia_esteso)
+        testo_ia_esteso = testo_ia_esteso.replace("</b>", "</b>\n")
 
-        # 5. Invio Messaggio Testuale e Fissaggio Automatico
-        if es_ora_speciale:
-            try:
-                link_art = ai_engine.crea_pagina_telegraph(
-                    titolo=f"Approfondimento Leonia+ - {datetime.now().strftime('%d/%m/%Y')}",
-                    contenuto_html=testo_ia
-                )
-                msg = f"<b>LEONIA+ APPROFONDIMENTO</b>\n\n<a href='{link_art}'>🔗 LEGGI L'ARTICOLO</a>"
-            except Exception as e:
-                logging.error(f"Errore creazione pagina Telegraph: {e}")
-                msg = f"<b>LEONIA+ NOTIZIE - ORE {ora_attuale}:00</b>\n\n{testo_ia}"
-        else:
-            msg = f"<b>LEONIA+ NOTIZIE - ORE {ora_attuale}:00</b>\n\n{testo_ia}\n\n<i>Di Leonia+ Notizie</i>"
-        
-        # Invia a tutti e fissa automaticamente (la logica di pin è interna a send_message_to_all)
-        telegram_bot.send_message_to_all(msg)
-        logging.info(f"Messaggio inviato e fissato con successo ({modello_usato}).")
-
-        # 6. Generazione e Invio Audio
+        # Generazione Pagina Telegraph per TUTTE le edizioni
         try:
-            audio_file = audio_engine.genera_audio(testo_ia)
+            tipo_notiziario = "APPROFONDIMENTO" if es_ora_speciale else "EDIZIONE"
+            link_telegraph = ai_engine.crea_pagina_telegraph(
+                titolo=f"{tipo_notiziario} LEONIA+ - ORE {ora_attuale}:00 del {datetime.now().strftime('%d/%m/%Y')}",
+                contenuto_html=testo_ia_esteso
+            )
+        except Exception as e:
+            logging.error(f"Errore creazione pagina Telegraph: {e}")
+            link_telegraph = "#"
+
+        # 5. Generazione Sintesi Breve per Telegram (Titolo + Breve riassunto)
+        titolo_principale = notizie_da_inviare[0].get('titolo', 'Notizie dell\'ultima ora') if isinstance(notizie_da_inviare[0], dict) else 'Notizie Leonia+'
+        
+        if es_ora_speciale:
+            msg_telegram = (
+                f"🌟 <b>LEONIA+ APPROFONDIMENTO - ORE {ora_attuale}:00</b>\n\n"
+                f"📌 <b>Focus su:</b> {titolo_principale}\n"
+                f"📊 <b>Valutazione Potenziale:</b> {valutazione_stelle}\n\n"
+                f"👉 L'analisi completa e dettagliata dello scenario è disponibile sulla nostra pagina dedicata.\n\n"
+                f"🔗 <a href='{link_telegraph}'>LEGGI L'APPROFONDIMENTO COMPLETO</a>"
+            )
+        else:
+            msg_telegram = (
+                f"📢 <b>LEONIA+ NOTIZIE - ORE {ora_attuale}:00</b>\n\n"
+                f"🔹 <b>Primo Piano:</b> {titolo_principale}\n"
+                f"📊 <b>Valutazione Potenziale:</b> {valutazione_stelle}\n\n"
+                f"📝 Abbiamo sintetizzato le 5 notizie più importanti del momento nel report esteso.\n\n"
+                f"🔗 <a href='{link_telegraph}'>LEGGI IL REPORT SU TELEGRAPH</a>"
+            )
+        
+        # Invio del testo sintetico con pin automatico
+        telegram_bot.send_message_to_all(msg_telegram)
+        logging.info(f"Messaggio sintetico inviato e fissato ({modello_usato}).")
+
+        # 6. Generazione e Invio Audio (basato sul testo esteso)
+        try:
+            audio_file = audio_engine.genera_audio(testo_ia_esteso)
             if audio_file and os.path.exists(audio_file):
-                didascalia = f"🎙 <b>Audio-Notiziario - Ore {ora_attuale}:00</b>"
+                didascalia = (
+                    f"🎙 <b>Audio-Notiziario - Ore {ora_attuale}:00</b>\n\n"
+                    f"🔗 <a href='{link_telegraph}'>Leggi il testo completo qui</a>"
+                )
                 telegram_bot.send_audio_to_all(audio_file, didascalia)
-                
-                # Pulizia immediata
                 os.remove(audio_file)
                 logging.info("File audio rimosso correttamente.")
         except Exception as e:
@@ -137,18 +180,15 @@ if __name__ == "__main__":
     flask_thread.start()
     logging.info("Web Server Flask avviato (Port-binding attivo)")
 
-    # 2. Configura Schedule (Ogni 3 ore + l'appuntamento speciale delle 18:00)
-    schedule.every().day.at("09:00").do(job_notiziario)
-    schedule.every().day.at("12:00").do(job_notiziario)
+    # 2. Configura Nuovi Orari Richiesti
+    # NOTIZIE: 8, 13, 18
+    schedule.every().day.at("08:00").do(job_notiziario)
+    schedule.every().day.at("13:00").do(job_notiziario)
+    schedule.every().day.at("18:00").do(job_notiziario)
+    
+    # APPROFONDIMENTO: 15
     schedule.every().day.at("15:00").do(job_notiziario)
-    schedule.every().day.at("18:00").do(job_notiziario) # Rimane l'approfondimento speciale
-    schedule.every().day.at("21:00").do(job_notiziario)
 
     logging.info("====================================")
     logging.info("   LEONIA+ NOTIZIE BOT AVVIATO      ")
     logging.info("====================================")
-
-    # 4. Loop Infinito
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
