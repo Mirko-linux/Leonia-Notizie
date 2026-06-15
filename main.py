@@ -171,7 +171,7 @@ def job_notiziario():
                 logging.info("File audio rimosso correttamente.")
         except Exception as e:
             logging.error(f"Errore durante la fase audio: {e}")
-
+            
 # --- AVVIO E SCHEDULAZIONE ---
 if __name__ == "__main__":
     # 1. Avvia Flask in un thread separato
@@ -192,3 +192,10 @@ if __name__ == "__main__":
     logging.info("====================================")
     logging.info("   LEONIA+ NOTIZIE BOT AVVIATO      ")
     logging.info("====================================")
+
+    # [RIMOZIONE TEST INIZIALE] Il bot ora non eseguirà job_notiziario() all'accensione
+
+    # 3. LOOP INFINITO (Mantiene in vita l'applicazione su Render)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
