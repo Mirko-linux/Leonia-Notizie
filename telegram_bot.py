@@ -3,53 +3,80 @@ import config
 import logging
 import time
 import os
-import redis # Assicurati che sia nel requirements.txt
 import re
 
-# --- CONFIGURAZIONE DATABASE REDIS ---
-REDIS_URL = os.getenv("REDIS_URL")
-CHIAVE_REDIS_GRUPPI = "lista_gruppi"
+# --- CONFIGURAZIONE CANALE CASSAFORTE ---
+# Recupera l'ID del canale privato usato come database storico
+CANALE_LOG_ID = os.getenv("CANALE_LOG_ID")
 
-# Inizializzazione globale di 'r'
+# Variabile 'r' mantenuta a None per evitare crash se referenziata altrove
 r = None
-
-if REDIS_URL:
-    try:
-        # Configurazione corretta per Redis 8.0.0 (rimosso ssl_cert_reqs che causava il crash)
-        r = redis.from_url(
-            REDIS_URL, 
-            decode_responses=True,
-            retry_on_timeout=True,
-            socket_connect_timeout=15,
-            socket_keepalive=True
-        )
-        # Test di connessione immediato
-        r.ping()
-        logging.info("DATABASE: Collegato a Redis con successo.")
-    except Exception as e:
-        logging.error(f"DATABASE: Errore connessione Redis: {e}")
-        r = None 
 
 # --- GESTIONE DESTINATARI ---
 
 def get_lista_gruppi():
     """Recupera la lista unica da Variabili d'ambiente e Canale principale."""
+    # 1. Canale ufficiale dal file config
     lista = [str(config.CHAT_ID)] 
     
+    # 2. Recupera dalla variabile d'ambiente su Render (GRUPPI_ID)
     gruppi_env = os.getenv("GRUPPI_ID")
     if gruppi_env:
         ids_da_env = [g.strip() for g in gruppi_env.split(",") if g.strip()]
         lista.extend(ids_da_env)
         logging.info(f"CONFIG: Caricati {len(ids_da_env)} gruppi da Environment.")
 
-    if r:
-        try:
-            gruppi_redis = r.smembers(CHIAVE_REDIS_GRUPPI)
-            lista.extend(list(gruppi_redis))
-        except:
-            pass
-
     return list(dict.fromkeys(lista))
+
+# --- LOGICA DEL "CANALE CASSAFORTE" (DATABASE SU TELEGRAM) ---
+
+def controlla_duplicato_su_telegram(url_notizia):
+    """
+    Legge gli ultimi 100 messaggi dal canale privato di log.
+    Ritorna True se l'URL è già presente, altrimenti False.
+    """
+    if not CANALE_LOG_ID:
+        logging.warning("CANALE CASSAFORTE: CANALE_LOG_ID non configurato. Salto il controllo duplicati.")
+        return False
+
+    url = f"https://api.telegram.org/bot{config.TOKEN}/getChatHistory"
+    payload = {
+        "chat_id": CANALE_LOG_ID,
+        "limit": 100  # Controlla la cronologia delle ultime 100 notizie salvate
+    }
+    
+    try:
+        res = requests.post(url, json=payload, timeout=20)
+        if res.status_code == 200:
+            messaggi = res.json().get("result", [])
+            for msg in messaggi:
+                testo = msg.get("text", "")
+                if url_notizia in testo:
+                    return True  # Trovato! La notizia è un duplicato
+        else:
+            logging.error(f"CANALE CASSAFORTE: Errore getChatHistory: {res.text}")
+    except Exception as e:
+        logging.error(f"CANALE CASSAFORTE: Errore durante la lettura del log: {e}")
+    
+    return False
+
+def salva_notizia_nel_log(url_notizia, titolo):
+    """Invia l'URL e il titolo della notizia nel canale privato per tenerne traccia."""
+    if not CANALE_LOG_ID:
+        return False
+        
+    url = f"https://api.telegram.org/bot{config.TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CANALE_LOG_ID,
+        "text": f"LOG_DATA\nTitolo: {titolo}\nLink: {url_notizia}",
+        "disable_web_page_preview": True
+    }
+    try:
+        requests.post(url, json=payload, timeout=15)
+        return True
+    except Exception as e:
+        logging.error(f"CANALE CASSAFORTE: Impossibile scrivere nel canale di log: {e}")
+        return False
 
 # --- FUNZIONI DI INVIO E FISSAGGIO ---
 
@@ -59,7 +86,7 @@ def pin_message(chat_id, message_id):
     payload = {
         "chat_id": chat_id,
         "message_id": message_id,
-        "disable_notification": True  # Fissa in modo silenzioso per non spammare
+        "disable_notification": True  # Silenzioso
     }
     try:
         res = requests.post(url, json=payload, timeout=15)
@@ -96,7 +123,6 @@ def send_message(text, target_chat=None):
         res = requests.post(url, json=payload, timeout=25)
         if res.status_code == 200:
             data = res.json()
-            # Estraiamo l'ID del messaggio appena inviato
             return data.get("result", {}).get("message_id")
         return None
     except Exception as e:
@@ -109,16 +135,12 @@ def send_message_to_all(text):
     logging.info(f"INVIO: Inizio distribuzione e fissaggio a {len(destinatari)} chat.")
     
     for full_id in destinatari:
-        # 1. Invia il messaggio e ottieni il suo ID
         message_id = send_message(text, target_chat=full_id)
-        
-        # 2. Se l'invio ha avuto successo, lo fissa in alto
         if message_id:
-            # Estrae il chat_id pulito senza l'id del topic (perché pinChatMessage vuole solo l'ID della chat)
             chat_id = full_id.split(":")[0] if ":" in str(full_id) else full_id
             pin_message(chat_id, message_id)
             
-        time.sleep(0.5) # Protezione anti-flood
+        time.sleep(0.5)
     return True
 
 def send_audio_to_all(audio_path, caption):
@@ -150,12 +172,5 @@ def send_audio_to_all(audio_path, caption):
     return True
 
 def registra_gruppo(chat_id):
-    """Salva un nuovo gruppo su Redis (attivato da /start)."""
-    if r:
-        try:
-            r.sadd(CHIAVE_REDIS_GRUPPI, str(chat_id))
-            logging.info(f"DATABASE: Nuovo gruppo registrato: {chat_id}")
-            return True
-        except:
-            return False
+    """Mantenuta unicamente per retrocompatibilità moduli."""
     return False
